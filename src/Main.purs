@@ -4,22 +4,13 @@ import Prelude
 
 import Data.Array as Array
 import Data.Either (Either(..))
-import Data.Maybe (Maybe(..), fromMaybe)
+import Data.Maybe (Maybe(..))
 import Data.Set (Set)
 import Data.Set as Set
 import Effect (Effect)
 import Effect.Console as Console
 import Input (Instruction(..))
-
--- nop +0
--- acc +1
--- jmp +4
--- acc +3
--- jmp -3
--- acc -99
--- acc +1
--- jmp -4
--- acc +6
+import Input as Input
 
 type Program = Array Instruction
 
@@ -31,85 +22,74 @@ type ProgramState =
   }
 
 input_small :: Program
-input_small = [Nop 0, Acc 1, Jmp 4, Acc 3, Jmp (-3), Acc (-99), Acc 1, Jmp (-4), Acc 6]
-
-input_small1 :: Program
-input_small1 = [Nop 0]
+input_small = [Nop 0, Acc 1, Jmp 4, Acc 3, Jmp (-3), Acc (-99), Acc 1, Nop (-4), Acc 6]
 
 initialState :: ProgramState
 initialState =
-  { program: input_small1
+--  { program: input_small
+  { program: Input.input
   , program_counter: 0
   , accumulator: 0
   , seen: Set.empty
   }
 
-data Result
+data StepResult
   = Loop Int
   | Terminate Int
   | Next ProgramState
 
-step :: ProgramState -> Result
-step st@{ program, program_counter, accumulator, seen } =
+step :: ProgramState -> StepResult
+step old_state@{ program, program_counter, accumulator, seen } =
   if Set.member program_counter seen then
     Loop accumulator
   else
+    let st = old_state { seen = Set.insert program_counter seen } in
     case Array.index program program_counter of
       Just (Nop _) ->
-        Next
-          (st
-          { program_counter = st.program_counter + 1
-          , seen = Set.insert program_counter st.seen
-          })
+        Next (st { program_counter = program_counter + 1 })
       Just (Acc x) ->
-        Next
-          (st
-          { program_counter = st.program_counter + 1
-          , seen = Set.insert program_counter st.seen
-          , accumulator = st.accumulator + x
+        Next (st
+          { program_counter = program_counter + 1
+          , accumulator = accumulator + x
           })
       Just (Jmp x) ->
-        Next
-          (st
-          { program_counter = st.program_counter + x
-          , seen = Set.insert program_counter st.seen
-          })
+        Next (st { program_counter = program_counter + x })
       Nothing ->
         Terminate accumulator
 
-eval :: ProgramState -> Int
+data EvalResult = Looped Int | Terminated Int
+
+eval :: ProgramState -> EvalResult
 eval st = case step st of
   Next nextState -> eval nextState
-  Loop accumulator -> accumulator
-  Terminate accumulator -> accumulator
+  Loop accumulator -> Looped accumulator
+  Terminate accumulator -> Terminated accumulator
 
-eval' :: ProgramState -> Maybe Int
-eval' st = case step st of
-  Next nextState -> eval' nextState
-  Loop accumulator -> Nothing
-  Terminate accumulator -> Just accumulator
+flipInstruction :: ProgramState -> Maybe ProgramState
+flipInstruction st = do
+  current_instruction <- Array.index st.program st.program_counter
+  flipped <- case current_instruction of
+    Jmp x -> Just (Nop x)
+    Nop x -> Just (Jmp x)
+    Acc x -> Nothing
+  new_program <- Array.updateAt st.program_counter flipped st.program
+  Just (st { program = new_program })
 
-flipInstruction :: Instruction -> Instruction
-flipInstruction = case _ of
-  Jmp x -> Nop x
-  Nop x -> Jmp x
-  Acc x -> Acc x
+solve1 :: ProgramState -> Either String Int
+solve1 st = case eval st of
+  Looped x -> 
+    Right x
+  Terminated x ->
+    Left "Accidentally correct"
 
-flip :: ProgramState -> ProgramState
-flip st =
-  st
-  { program =
-       fromMaybe st.program (Array.modifyAt st.program_counter flipInstruction st.program)
-  }
-
-evalFix :: ProgramState -> Either String Int
-evalFix st = case eval' (flip st) of
-  Just result ->
-    Right result
-  Nothing ->
-    case step st of
+solve2 :: ProgramState -> Either String Int
+solve2 st = 
+  case flipInstruction st of
+    Just flipped 
+      | Terminated x <- eval flipped -> Right x
+    _ -> case step st of
       Next nextState ->
-        evalFix nextState
+        solve2 nextState
       Loop accumulator ->
         Left "Not fixable by changing a single instruction"
       Terminate accumulator ->
@@ -117,5 +97,7 @@ evalFix st = case eval' (flip st) of
 
 main :: Effect Unit
 main = do
-  let result = evalFix initialState
-  Console.logShow result
+  Console.log "Problem 1:"
+  Console.logShow (solve1 initialState)
+  Console.log "Problem 2:"
+  Console.logShow (solve2 initialState)
